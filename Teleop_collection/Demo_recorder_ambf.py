@@ -126,7 +126,6 @@ if __name__ == '__main__':
         '/ambf/env/psm2/baselink/State': RigidBodyState,
         '/MTML/gripper/measured_js': JointState,
         '/MTMR/gripper/measured_js': JointState
-
     }
 
     # is_visualized=True to save both PNG and JPEG (visual) images

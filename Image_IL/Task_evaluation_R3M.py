@@ -15,7 +15,7 @@ from sensor_msgs.msg import Image as RosImage
 import gymnasium as gym
 from stable_baselines3.common.utils import set_random_seed
 import time
-from r3m import load_r3m
+from r3m.r3m import load_r3m
 import argparse
 import os
 import importlib
@@ -25,6 +25,7 @@ parser.add_argument('--task_name', type=str, required=True, help='Name of the ta
 parser.add_argument('--view_name', type=str, required=True, help='Name of the view')
 parser.add_argument('--trans_error', type=float, required=True, help='Translational error threshold in cm')
 parser.add_argument('--angle_error', type=float, required=True, help='Angular error threshold in degrees')
+parser.add_argument('--model_path', type=str, required=True, help='Path to the model you want to test')
 args = parser.parse_args()
 
 task_name = args.task_name
@@ -115,7 +116,14 @@ def wait_for_images():
     for key in image_received:
         image_received[key] = False
 
-model_path = f'/home/jwu220/Trajectory_cloud/IL_model_v2/{task_name}/R3M_{view_name}_view/Model/model_final.pth'
+# model_path = f'/home/jwu220/Trajectory_cloud/IL_model_v2/{task_name}/R3M_{view_name}_view/Model/model_final.pth'
+# model_path = f"/home/cis2-automated-suturing/Desktop/grayson/grayson_SurgicAI_fork/SurgicAI/Image_IL/IL_model_v2/Regrasp/R3M_front_view/Model_from_surgicAI_repo/model_final.pth"
+# model_path = "/home/cis2-automated-suturing/Desktop/grayson/grayson_SurgicAI_fork/SurgicAI/Image_IL/IL_model_v2/Approach/R3M_cameraL_view/Model/model_final.pth"
+# model_path = "/home/cis2-automated-suturing/Desktop/grayson/grayson_SurgicAI_fork/SurgicAI/IL_model_v2/Regrasp/R3M_front_view/jins_data/model_final.pth"
+# model_path = "/home/cis2-automated-suturing/Desktop/grayson/grayson_SurgicAI_fork/SurgicAI/RL/hardcoded_expert_traj_data/regrasp/trained_model/model_final.pth"
+model_path = args.model_path
+print(model_path)
+print("+"*100)
 model = load_r3m_model(model_path, r3m_model)
 
 seed = 60
@@ -147,7 +155,7 @@ def run_experiment(num_episodes=20):
             wait_for_images()
             proprio_data = obs["observation"][0:7]
             action = predict_action(model, current_images[view_name], proprio_data).squeeze()
-            action[0:3] = action[0:3] + np.random.uniform(-0.1, 0.1, size=action[0:3].shape)
+            # action[0:3] = action[0:3] + np.random.uniform(-0.1, 0.1, size=action[0:3].shape)
             if is_grasp:
                 action[-1] = 0.0
             next_obs, reward, done, _, info = env.step(action)

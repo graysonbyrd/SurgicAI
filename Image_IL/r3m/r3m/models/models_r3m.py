@@ -10,7 +10,7 @@ from torch.nn.modules.activation import Sigmoid
 from torch.nn.modules.linear import Identity
 import torchvision
 from torchvision import transforms
-from r3m import utils
+from r3m.r3m import utils
 from pathlib import Path
 from torchvision.utils import save_image
 import torchvision.transforms as T

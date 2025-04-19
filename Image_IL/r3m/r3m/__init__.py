@@ -2,7 +2,7 @@
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-from r3m.models.models_r3m import R3M
+from .models.models_r3m import R3M
 
 import os 
 from os.path import expanduser
@@ -24,7 +24,7 @@ def cleanup_config(cfg):
     for key in list(keys):
         if key not in VALID_ARGS:
             del config.agent[key]
-    config.agent["_target_"] = "r3m.R3M"
+    config.agent["_target_"] = "r3m.r3m.R3M"
     config["device"] = device
     
     ## Hardcodes to remove the language head

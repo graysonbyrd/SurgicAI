@@ -10,7 +10,8 @@ import torch
 
 gc.collect()
 torch.cuda.empty_cache()
-Base_directory = "/home/jwu220/Trajectory_cloud/RL_new"
+# Base_directory = "/home/jwu220/Trajectory_cloud/RL_new"
+Base_directory = "/home/cis2-automated-suturing/Desktop/grayson/grayson_SurgicAI_fork/SurgicAI/RL"
 
 def setup_environment(args):
     max_episode_steps = 300
@@ -42,7 +43,7 @@ def parse_arguments():
     return parser.parse_args()
 
 def load_model(algorithm, env, task_name, reward_type, seed):
-    model_path = f"{Base_directory}/{task_name}/{algorithm}/{reward_type}/seed_{seed}/final_model.zip"
+    model_path = f"{Base_directory}/{task_name}/{algorithm}/{reward_type}/seed_{seed}/final_model"
     algorithm_config = get_algorithm_config(algorithm, env, task_name, reward_type, seed, None, True)
     model_class = algorithm_config['class']
     return model_class.load(model_path, env=env)
@@ -60,7 +61,7 @@ def run_evaluation(env, model, num_episodes, max_episode_steps):
         for timestep in range(max_episode_steps):
             action, _ = model.predict(obs, deterministic=True)
             next_obs, reward, terminated, truncated, info = env.step(action)
-            trajectory_length += np.linalg.norm(action[0:3] * env.step_size[0:3] * 1000)
+            trajectory_length += np.linalg.norm(action[0:3] * env.env.env.env.step_size[0:3] * 1000)
             obs = next_obs
             if terminated:
                 total_success += 1
@@ -110,6 +111,7 @@ def main():
     env, step_size, threshold, max_episode_steps = setup_environment(args)
     
     train_seeds = [1, 10, 100, 1000, 10000]
+    train_seeds = [10]
     all_success_rates = []
     all_lengths = []
     all_timecosts = []

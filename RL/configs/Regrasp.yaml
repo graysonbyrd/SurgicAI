@@ -1,0 +1,17 @@
+task_name: Regrasp
+trans_error: 1
+angle_error: 1
+seed: 42
+max_episode_steps: 2000
+num_episodes: 1
+
+# domain_randomization:
+#   lighting: True
+#   colors: True
+#   camera_angles: True
+
+# collected_data_type:
+#   camera_view_types: ['3rd_person', 'psm1', 'psm2']
+#   image_types: ['rgb', 'segmentation']
+#   state_information: ['needle_pose', 'psm1_pose']
+

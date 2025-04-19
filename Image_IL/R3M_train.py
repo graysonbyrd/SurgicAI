@@ -9,12 +9,15 @@ import os
 import re
 import wandb
 import argparse
-from r3m import load_r3m
+from r3m.r3m import load_r3m
 import gc
+import glob
+from tqdm import tqdm
 
 parser = argparse.ArgumentParser(description='Behavior Cloning Training')
 parser.add_argument('--task_name', type=str, required=True, help='Name of the task')
 parser.add_argument('--view_name', type=str, required=True, help='Name of the view')
+parser.add_argument('--data_dir', type=str, required=True, help='The path to the directory containing your dataset\'s .pkl files')
 args = parser.parse_args()
 
 task_name = args.task_name
@@ -22,8 +25,13 @@ view_name = args.view_name
 
 gc.collect()
 torch.cuda.empty_cache()
-data_dir = f'/home/jwu220/Trajectory_cloud/Five_task_v2/{task_name}'
-model_save_dir = f'/home/jwu220/Trajectory_cloud/IL_model_v2/{task_name}/R3M_{view_name}_view/Model'
+# data_dir = f'/home/jwu220/Trajectory_cloud/Five_task_v2/{task_name}'
+# model_save_dir_old = f'/home/jwu220/Trajectory_cloud/IL_model_v2/{task_name}/R3M_{view_name}_view/Model'
+
+# data_dir = "/home/cis2-automated-suturing/Desktop/grayson/grayson_SurgicAI_fork/SurgicAI/RL/hardcoded_expert_traj_data/approach"
+# data_dir = f'/home/cis2-automated-suturing/Desktop/grayson/grayson_SurgicAI_fork/SurgicAI/IL_trainsets/Regrasp_debugging'
+# data_dir = f'/home/jwu220/Trajectory_cloud/Five_task_v2/{task_name}'
+model_save_dir = os.path.join(args.data_dir, "trained_model")
 
 os.makedirs(model_save_dir, exist_ok=True)
 
@@ -53,8 +61,9 @@ class BehaviorCloningModel(nn.Module):
 bc_model = BehaviorCloningModel(r3m_model)
 
 class PickleDataset(Dataset):
-    def __init__(self, data_dir):
+    def __init__(self, data_dir, view_name):
         self.data = []
+        self.view_name = view_name
         self.transform = transforms.Compose([
             transforms.Resize((256, 256)),
             transforms.CenterCrop(224),
@@ -62,12 +71,15 @@ class PickleDataset(Dataset):
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
         
-        for f in os.listdir(data_dir):
-            if re.match(r'episode_\d+\.pkl$', f):
-                file_path = os.path.join(data_dir, f)
-                with open(file_path, 'rb') as file:
-                    trajectory = pickle.load(file)
-                    self.data.extend(trajectory)
+        # for f in os.listdir(data_dir):
+            # if re.match(r'episode_\d+\.pkl$', f):
+        print(f"Loading data from dataset {data_dir}...")
+        for f in tqdm(glob.glob(os.path.join(data_dir, "*.pkl"))):
+            # file_path = os.path.join(data_dir, f)
+            file_path = f
+            with open(file_path, 'rb') as file:
+                trajectory = pickle.load(file)
+                self.data.extend(trajectory)
         
         print(f"Total number of data points: {len(self.data)}")
 
@@ -77,7 +89,7 @@ class PickleDataset(Dataset):
     def __getitem__(self, idx):
         step = self.data[idx]
         
-        image_data = step['images'][view_name]
+        image_data = step['images'][self.view_name]
         img = Image.fromarray(image_data.astype('uint8'), 'RGB') if isinstance(image_data, np.ndarray) else Image.open(image_data).convert('RGB')
         img = self.transform(img)
         
@@ -86,7 +98,8 @@ class PickleDataset(Dataset):
         
         return img, action, proprioceptive
 
-dataset = PickleDataset(data_dir)
+# dataset_old = PickleDataset(data_dir_old, "front")
+dataset = PickleDataset(args.data_dir, "cameraL")
 train_size = int(0.8 * len(dataset))
 test_size = len(dataset) - train_size
 train_dataset, test_dataset = torch.utils.data.random_split(dataset, [train_size, test_size])
@@ -101,10 +114,12 @@ wandb.init(project="behavior_cloning_v2", name=f"{task_name}_{view_name}_view")
 wandb.config.update(args)
 
 def train_and_evaluate(model, train_loader, test_loader, criterion, optimizer, num_epochs, checkpoint_interval):
+    print(f"Training for {num_epochs} epochs...")
     for epoch in range(num_epochs):
         model.train()
         total_train_loss = 0
-        for i, (images, actions, proprio_data) in enumerate(train_loader):
+        i = 0
+        for images, actions, proprio_data in tqdm(train_loader):
             images, actions, proprio_data = images.to(device), actions.to(device), proprio_data.to(device)
             optimizer.zero_grad()
             outputs = model(images, proprio_data)
@@ -112,6 +127,7 @@ def train_and_evaluate(model, train_loader, test_loader, criterion, optimizer, n
             loss.backward()
             optimizer.step()
             total_train_loss += loss.item()
+            i += 1
         
         avg_train_loss = total_train_loss / len(train_loader)
         wandb.log({"Train Loss": avg_train_loss}, step=epoch)
@@ -135,7 +151,7 @@ def train_and_evaluate(model, train_loader, test_loader, criterion, optimizer, n
     torch.save(model.state_dict(), os.path.join(model_save_dir, 'model_final.pth'))
     print('Final model saved')
 
-num_epochs = 40
+num_epochs = 50
 checkpoint_interval = 20
 train_and_evaluate(bc_model, train_loader, test_loader, criterion, optimizer, num_epochs, checkpoint_interval)
 
