@@ -18,12 +18,16 @@ import pickle
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import rospy
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig
 import os
 import cv2
 import argparse
 from PIL import Image as PIL_Image
 import yaml
+import rospy
+import random
+
+
 
 bridge = CvBridge()
 
@@ -34,6 +38,23 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Collect expert trajectory data.")
     parser.add_argument('--config', type=str, required=True, help='Name of the task/environment')
     return parser.parse_args()
+
+def randomize_domain(config: DictConfig):
+
+    # randomize lighting
+    if config.domain_randomization.lighting.randomize:
+        lower = config.domain_randomization.lighting.bounds[0]
+        upper = config.domain_randomization.lighting.bounds[1]
+        constant_attenuation = random.uniform(lower, upper)
+        linear_attenuation = random.uniform(lower, upper)
+        quadratic_attenuation = random.uniform(lower, upper)
+
+        # Initialize the ROS node
+        rospy.init_node('domain_randomization')
+        rospy.set_param('/ambf/env/lights/light2/attenuation/constant', constant_attenuation)
+        rospy.set_param('/ambf/env/lights/light2/attenuation/linear', linear_attenuation)
+        rospy.set_param('/ambf/env/lights/light2/attenuation/quadratic', quadratic_attenuation)
+
 
 def cameraL_image_callback(msg):
     """Callback function to store image data"""
@@ -114,6 +135,7 @@ os.makedirs(save_dir, exist_ok=True)
 env.reset()
 
 for episode in range(num_episodes):
+    randomize_domain(config)
     img_idx = 0
     obs,_ = env.reset()
     time.sleep(0.5)
