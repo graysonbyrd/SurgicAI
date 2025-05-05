@@ -116,11 +116,6 @@ def wait_for_images():
     for key in image_received:
         image_received[key] = False
 
-# model_path = f'/home/jwu220/Trajectory_cloud/IL_model_v2/{task_name}/R3M_{view_name}_view/Model/model_final.pth'
-# model_path = f"/home/cis2-automated-suturing/Desktop/grayson/grayson_SurgicAI_fork/SurgicAI/Image_IL/IL_model_v2/Regrasp/R3M_front_view/Model_from_surgicAI_repo/model_final.pth"
-# model_path = "/home/cis2-automated-suturing/Desktop/grayson/grayson_SurgicAI_fork/SurgicAI/Image_IL/IL_model_v2/Approach/R3M_cameraL_view/Model/model_final.pth"
-# model_path = "/home/cis2-automated-suturing/Desktop/grayson/grayson_SurgicAI_fork/SurgicAI/IL_model_v2/Regrasp/R3M_front_view/jins_data/model_final.pth"
-# model_path = "/home/cis2-automated-suturing/Desktop/grayson/grayson_SurgicAI_fork/SurgicAI/RL/hardcoded_expert_traj_data/regrasp/trained_model/model_final.pth"
 model_path = args.model_path
 print(model_path)
 print("+"*100)
@@ -141,11 +136,15 @@ env = gym.make("SAC_HER_sparse", render_mode=None, reward_type="dense", seed=see
 all_trajectory_lengths = []
 all_time_costs = []
 success_rates = []
+all_final_trans_errors = []
+all_final_angle_error = []
 
 def run_experiment(num_episodes=20):
     total_length = 0
     total_timecost = 0
     total_success = 0
+    total_trans_error = 0
+    total_angle_error = 0
     
     for episode in range(num_episodes):
         obs, _ = env.reset()
@@ -155,9 +154,21 @@ def run_experiment(num_episodes=20):
             wait_for_images()
             proprio_data = obs["observation"][0:7]
             action = predict_action(model, current_images[view_name], proprio_data).squeeze()
-            # action[0:3] = action[0:3] + np.random.uniform(-0.1, 0.1, size=action[0:3].shape)
+            # print(f"Predicted action: {action}")
+            action[0:3] = action[0:3] + np.random.uniform(-0.1, 0.1, size=action[0:3].shape)
+            
+            # print(f"Action with noise: {action}")
             if is_grasp:
                 action[-1] = 0.0
+            achieved_goal = obs['achieved_goal']
+            desired_goal = obs['desired_goal']
+            trans_error = np.linalg.norm(achieved_goal[:3] - desired_goal[:3])
+            angle_error = np.linalg.norm(achieved_goal[3:6] - desired_goal[3:6])
+            print(f"Trans Error: {trans_error}")
+            print(f"Angle Error: {angle_error}")
+            if trans_error < 0.2:
+                action = np.array([0, 0, 0, 0, 0, 0, -0.7])
+
             next_obs, reward, done, _, info = env.step(action)
             trajectory_length += np.linalg.norm(action[0:3] * trans_step * 1000)
             time.sleep(0.01)
@@ -166,8 +177,12 @@ def run_experiment(num_episodes=20):
                 total_success += 1
                 total_length += trajectory_length
                 total_timecost += timestep + 1
+                total_trans_error += trans_error
+                total_angle_error += angle_error
                 all_trajectory_lengths.append(trajectory_length)
                 all_time_costs.append(timestep + 1)
+                all_final_trans_errors.append(trans_error)
+                all_final_angle_error.append(angle_error)
                 print(f"Episode {episode + 1} completed in {timestep + 1} steps")
                 break
         if not done:
@@ -176,14 +191,16 @@ def run_experiment(num_episodes=20):
     success_rate = total_success / num_episodes
     avg_length = total_length / total_success if total_success > 0 else 0
     avg_timecost = total_timecost / total_success if total_success > 0 else 0
-    return success_rate, avg_length, avg_timecost
+    avg_final_trans_error = total_trans_error / num_episodes
+    avg_final_angle_error = total_angle_error / num_episodes
+    return success_rate, avg_length, avg_timecost, avg_final_trans_error, avg_final_angle_error
 
 num_experiments = 3
-num_episodes = 20
+num_episodes = 15
 
 for i in range(num_experiments):
     print(f"\nRunning experiment {i+1}/{num_experiments}")
-    success_rate, avg_length, avg_timecost = run_experiment(num_episodes)
+    success_rate, avg_length, avg_timecost, avg_final_trans_error, avg_final_angle_error = run_experiment(num_episodes)
     success_rates.append(success_rate)
     print(f"Experiment {i+1} completed")
 
@@ -194,15 +211,19 @@ mean_avg_length = np.mean(all_trajectory_lengths)
 std_avg_length = np.std(all_trajectory_lengths)
 mean_avg_timecost = np.mean(all_time_costs)
 std_avg_timecost = np.std(all_time_costs)
+mean_avg_trans_error = np.mean(all_final_trans_errors)
+std_avg_trans_error = np.std(all_final_trans_errors)
+mean_avg_angle_error = np.mean(all_final_angle_error)
+std_avg_angle_error = np.std(all_final_angle_error)
 
 print("\nFinal Results:")
 print(f"Success Rate: {mean_success_rate:.2%} ± {std_success_rate:.2%}")
 print(f"Average Trajectory Length: {mean_avg_length:.2f} ± {std_avg_length:.2f} mm")
 print(f"Average Time Cost: {mean_avg_timecost:.2f} ± {std_avg_timecost:.2f} steps")
 
-results_dir = f"/home/jwu220/Trajectory_cloud/IL_model_v2/{task_name}/R3M_{view_name}_view/Results"
+results_dir = os.path.dirname(args.model_path)
 os.makedirs(results_dir, exist_ok=True)
-results_file = os.path.join(results_dir, f"{task_name}_{view_name}_results.txt")
+results_file = os.path.join(results_dir, f"{task_name}_{view_name}_checkpoint_{os.path.basename(args.model_path)}_results.txt")
 
 with open(results_file, 'w') as f:
     f.write(f"Task: {task_name}\n")
@@ -213,5 +234,7 @@ with open(results_file, 'w') as f:
     f.write(f"Success Rate: {mean_success_rate:.2%} ± {std_success_rate:.2%}\n")
     f.write(f"Average Trajectory Length: {mean_avg_length:.2f} ± {std_avg_length:.2f} mm\n")
     f.write(f"Average Time Cost: {mean_avg_timecost:.2f} ± {std_avg_timecost:.2f} steps\n")
+    f.write(f"Average Final Trans Error: {mean_avg_trans_error:.2f} ± {std_avg_trans_error:.2f} mm\n")
+    f.write(f"Average Final Angle Error: {mean_avg_angle_error:.2f} ± {std_avg_angle_error:.2f} mm\n")
 
 print(f"\nResults saved to {results_file}")

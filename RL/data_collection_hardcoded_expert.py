@@ -26,8 +26,7 @@ from PIL import Image as PIL_Image
 import yaml
 import rospy
 import random
-
-
+import glob
 
 bridge = CvBridge()
 
@@ -39,18 +38,31 @@ def parse_arguments():
     parser.add_argument('--config', type=str, required=True, help='Name of the task/environment')
     return parser.parse_args()
 
-def randomize_domain(config: DictConfig):
+def randomize_domain(config: DictConfig, domain_save_txt_file: str, episode: int):
 
     # randomize lighting
     if config.domain_randomization.lighting.randomize:
-        lower = config.domain_randomization.lighting.bounds[0]
-        upper = config.domain_randomization.lighting.bounds[1]
-        constant_attenuation = random.uniform(lower, upper)
-        linear_attenuation = random.uniform(lower, upper)
-        quadratic_attenuation = random.uniform(lower, upper)
+
+        is_holdout_lighting_config = True
+        while is_holdout_lighting_config:
+            lower = config.domain_randomization.lighting.bounds[0]
+            upper = config.domain_randomization.lighting.bounds[1]
+            constant_attenuation = random.uniform(lower, upper)
+            linear_attenuation = random.uniform(lower, upper)
+            quadratic_attenuation = random.uniform(lower, upper)
+
+            if (abs(constant_attenuation - config.domain_randomization.lighting.holdout.constant) > 0.05
+                or abs(linear_attenuation - config.domain_randomization.lighting.holdout.linear) > 0.05
+                or abs(quadratic_attenuation - config.domain_randomization.lighting.holdout.quadratic) > 0.05):
+                is_holdout_lighting_config = False
+            else:
+                print("Lighting holdout config! Re-randomizing...")
+
+        with open(domain_save_txt_file, "a") as file:
+            file.write(f"Episode: {episode} - constant_attenuation ({constant_attenuation}) linear_attenuation ({linear_attenuation}) quadratic_attenuation ({quadratic_attenuation})\n")
 
         # Initialize the ROS node
-        rospy.init_node('domain_randomization')
+        # rospy.init_node('domain_randomization')
         rospy.set_param('/ambf/env/lights/light2/attenuation/constant', constant_attenuation)
         rospy.set_param('/ambf/env/lights/light2/attenuation/linear', linear_attenuation)
         rospy.set_param('/ambf/env/lights/light2/attenuation/quadratic', quadratic_attenuation)
@@ -58,21 +70,23 @@ def randomize_domain(config: DictConfig):
 
 def cameraL_image_callback(msg):
     """Callback function to store image data"""
+    global image_received, current_images
     try:
         # Convert the ROS Image message to a CV2 image
-        current_images["cameraL"] = bridge.imgmsg_to_cv2(msg, "bgr8")
+        current_images = bridge.imgmsg_to_cv2(msg, "bgr8")
         image_received = True  # Set flag that a new image is received
     except Exception as e:
         rospy.logerr("Failed to convert image: %s", e)
 
-def policy(obs,action_dim,time_step,noise=None):
+def policy(obs,action_dim,time_step):
     obs_dict = obs
     current = obs_dict['achieved_goal']
     goal = obs_dict['desired_goal']
     dist_vec = np.array(goal-current,dtype = np.float32)
     action = np.where(dist_vec>0,0.7,-0.7).astype(np.float32)
-    if time_step%8 == 0:
-        noise = np.random.uniform(-1.0, 1.0, size=action.shape)
+    # if time_step%8 == 0:
+    #     noise = np.random.uniform(-1.0, 1.0, size=action.shape)
+    noise = np.random.uniform(-0.2, 0.2, size=action.shape)
 
     # add noise to the action
     if noise is not None:
@@ -82,10 +96,11 @@ def policy(obs,action_dim,time_step,noise=None):
     # the needle
     if np.mean((current[:-1] - goal[:-1])**2) > 0.01:
         action[-1] = 0
-    else:
-        action[-1] *= 0.7
+    # else:
+    #     action[-1] *= 0.7
+    action[-1] = 0
 
-    return action,noise
+    return action
 
 def get_env_entry_point(task_name: str) -> SRC_subtask:
     if task_name.lower() == "approach":
@@ -96,6 +111,14 @@ def get_env_entry_point(task_name: str) -> SRC_subtask:
         return SRC_insert
     elif task_name.lower() == "pullout":
         return SRC_pullout
+    
+def wait_for_image():
+    global image_received
+    rate = rospy.Rate(100)  # 100 Hz
+    while not image_received and not rospy.is_shutdown():
+        rospy.loginfo("Waiting for image...")
+        rate.sleep()
+    image_received = False  # Reset the flag
 
 args = parse_arguments()
 config = OmegaConf.load(args.config)
@@ -128,24 +151,47 @@ max_action = [float('-inf')] * action_dim
 min_action = [float('inf')] * action_dim
 average_time_step = 0
 image_received = False
-
-save_dir = os.path.join("hardcoded_expert_traj_data", task_name.lower())
+randomization_type = "no_randomization" if not config.use_domain_randomization else "domain_randomization"
+save_dir = os.path.join(
+    "hardcoded_expert_traj_data", 
+    task_name.lower(), 
+    randomization_type, 
+    os.path.basename(args.config).replace(".yaml", "")
+)
 os.makedirs(save_dir, exist_ok=True)
+# save the data collection yaml file
+with open(os.path.join(save_dir, "config.yaml"), "w") as file:
+    OmegaConf.save(config=config, f=file)
+
+num_saved_episodes = len(glob.glob(os.path.join(save_dir, "*.pkl")))
 
 env.reset()
 
+domain_save_txt_file = os.path.join(save_dir, "domain_randomization_log.txt")
+
 for episode in range(num_episodes):
-    randomize_domain(config)
+    if config.use_domain_randomization:
+        randomize_domain(config, domain_save_txt_file, episode)
+    wait_for_image()
+    end_state_count = 0
+    episode_transitions = list()
+    imgs_save_dir = os.path.join(save_dir, f"episode_{num_saved_episodes}_imgs")
+    os.makedirs(imgs_save_dir, exist_ok=True)
     img_idx = 0
     obs,_ = env.reset()
     time.sleep(0.5)
-    noise = None
-    end_state_count = 0
-    episode_transitions = list()
+    # prev_images = np.zeros_like(current_images)
     for timestep in range(max_episode_steps):
-        action, noise = policy(obs,action_dim,timestep,noise)
+        action = policy(obs,action_dim,timestep)
+        # wait_for_image()
         next_obs, reward, done, _, info = env.step(action)
         time.sleep(0.01)
+        
+        # save the current image
+        img = PIL_Image.fromarray(current_images)
+        img_name = os.path.join(imgs_save_dir, f"episode_{episode}_seed_{seed}_timestep_{timestep}.png")
+        img.save(img_name)
+        
         transition = {
             "obs": obs,
             "next_obs": next_obs,
@@ -153,10 +199,14 @@ for episode in range(num_episodes):
             "reward": np.array([reward], dtype=np.float32),
             "done": np.array([done], dtype=np.float32),
             "info": info,
-            "images": current_images.copy()
+            "images": img_name
         }
+        prev_images = current_images.copy()
+        if transition["images"] is None:
+            raise Exception()
         episode_transitions.append(transition)
         obs = next_obs
+        image_received = False
         if done:
             print(timestep)
             average_time_step += timestep
@@ -164,7 +214,8 @@ for episode in range(num_episodes):
             break
 
     # save the dataset as a .pkl and each images into an images folder
-    save_path = os.path.join(os.path.join(save_dir, f"episode_{episode}_seed_{config.seed}.pkl"))
+    save_path = os.path.join(os.path.join(save_dir, f"episode_{num_saved_episodes}_seed_{config.seed}.pkl"))
+    num_saved_episodes += 1
     with open(save_path, "wb") as file:
         pickle.dump(episode_transitions, file)
 

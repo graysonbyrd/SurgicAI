@@ -62,6 +62,7 @@ bc_model = BehaviorCloningModel(r3m_model)
 
 class PickleDataset(Dataset):
     def __init__(self, data_dir, view_name):
+        self.data_dir = data_dir
         self.data = []
         self.view_name = view_name
         self.transform = transforms.Compose([
@@ -74,13 +75,21 @@ class PickleDataset(Dataset):
         # for f in os.listdir(data_dir):
             # if re.match(r'episode_\d+\.pkl$', f):
         print(f"Loading data from dataset {data_dir}...")
+        # with open(data_dir, "r") as file:
+        #     data = pickle.load(file)
+
+        # what = "yes"
         for f in tqdm(glob.glob(os.path.join(data_dir, "*.pkl"))):
             # file_path = os.path.join(data_dir, f)
             file_path = f
             with open(file_path, 'rb') as file:
                 trajectory = pickle.load(file)
                 self.data.extend(trajectory)
-        
+        # filtered_data = list()
+        # for data in self.data:
+        #     if self.view_name in data["images"]:
+        #         filtered_data.append(data)
+        # self.data = filtered_data
         print(f"Total number of data points: {len(self.data)}")
 
     def __len__(self):
@@ -89,8 +98,14 @@ class PickleDataset(Dataset):
     def __getitem__(self, idx):
         step = self.data[idx]
         
-        image_data = step['images'][self.view_name]
-        img = Image.fromarray(image_data.astype('uint8'), 'RGB') if isinstance(image_data, np.ndarray) else Image.open(image_data).convert('RGB')
+        # if self.view_name not in step['images']:
+        #     what = "yes"
+        img_file = step['images']
+        # sub_folder = "_".join(img_file.split("_")[:2]) + "_imgs"
+        # img_file = os.path.join(self.data_dir, sub_folder, img_file)
+        img = Image.open(img_file)
+        # image_data = step['images'][self.view_name]
+        # img = Image.fromarray(image_data.astype('uint8'), 'RGB') if isinstance(image_data, np.ndarray) else Image.open(image_data).convert('RGB')
         img = self.transform(img)
         
         proprioceptive = torch.tensor(step['obs']['observation'][0:7], dtype=torch.float32)
@@ -151,8 +166,8 @@ def train_and_evaluate(model, train_loader, test_loader, criterion, optimizer, n
     torch.save(model.state_dict(), os.path.join(model_save_dir, 'model_final.pth'))
     print('Final model saved')
 
-num_epochs = 50
-checkpoint_interval = 20
+num_epochs = 20
+checkpoint_interval = 5
 train_and_evaluate(bc_model, train_loader, test_loader, criterion, optimizer, num_epochs, checkpoint_interval)
 
 wandb.finish()
